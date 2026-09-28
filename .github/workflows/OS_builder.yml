@@ -32,7 +32,7 @@ jobs:
       # 3. Clone and install the Radxa SDK (rsdk)
       - name: Install rsdk
         run: |
-          git clone https://github.com/radxa-repo/rsdk.git
+          git clone https://github.com/RadxaOS-SDK/rsdk.git
           # (Note: Adjust the URL if they use a specific branch or repo for rsdk)
 
       # 4. Build the OS! 
