@@ -1,6 +1,5 @@
 name: Build OmniMow OS
 
-# Allows you to trigger the build manually with a button on GitHub
 on:
   workflow_dispatch:
     inputs:
@@ -15,52 +14,47 @@ on:
 
 jobs:
   build-os:
-    # The secret sauce: We request a native ARM64 server from GitHub!
     runs-on: ubuntu-24.04-arm 
 
     steps:
-      # 1. Fetch your scripts (inject.sh and omnimow-first-boot.sh) from the repo
       - name: Checkout OmniMow scripts
         uses: actions/checkout@v4
 
-      # 2. Install the required dependencies for building and injecting
+      # Fetch the correct dependencies for native build
       - name: Setup dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git fdisk udev xz-utils
+          sudo apt-get install -y git fdisk udev xz-utils bdebstrap mmdebstrap jsonnet libguestfs-tools gdisk
 
-      # 3. Clone and install the Radxa SDK (rsdk)
+      # Clone rsdk with all submodules
       - name: Install rsdk
         run: |
-          git clone https://github.com/RadxaOS-SDK/rsdk.git
-          # (Note: Adjust the URL if they use a specific branch or repo for rsdk)
+          git clone --recurse-submodules https://github.com/RadxaOS-SDK/rsdk.git
 
-      # 4. Build the OS! 
-      # It uses the variable from the button you clicked (noble or resolute)
+      # Run the build command from the src/bin folder
       - name: Build Radxa Image
         run: |
           cd rsdk
-          ./rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} cli
+          ./src/bin/rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} cli
 
-      # 5. Bake the OmniMow script into the finished image
       - name: Inject OmniMow First-Boot Script
         run: |
-          # Move your scripts into the rsdk folder
           cp inject.sh rsdk/
           cp omnimow-first-boot.sh rsdk/
           cd rsdk
           chmod +x inject.sh
+          # Ensure the inject script finds the file in Radxa's subfolders:
+          sed -i 's|out/\*.img|out/*/*.img|g' inject.sh
           sudo ./inject.sh
 
-      # 6. Compress the file so it is fast to download (takes some time)
+      # Compress the found .img file in the subfolder
       - name: Compress to .xz
         run: |
           cd rsdk
-          xz -z -T0 -9 out/*.img
+          xz -z -T0 -9 out/*/*.img
 
-      # 7. Upload the finished file to your GitHub page!
       - name: Upload finished OmniMow OS
         uses: actions/upload-artifact@v4
         with:
           name: OmniMow-OS-${{ inputs.ubuntu_version }}
-          path: rsdk/out/*.img.xz
+          path: rsdk/out/*/*.img.xz
