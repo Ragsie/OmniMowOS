@@ -13,6 +13,10 @@ echo "Modifying: $IMAGE"
 # 2. Mount the image as a virtual loop device
 LOOP_DEV=$(sudo losetup -fP --show "$IMAGE")
 
+# VIGTIG TILFØJELSE TIL GITHUB ACTIONS: 
+# Giv serveren 2 sekunder til at lade partitionerne poppe op i systemet
+sleep 2
+
 # 3. Find the root filesystem (Radxa's Ubuntu root drive is always ext4)
 ROOT_PART=$(lsblk -rn -o NAME,FSTYPE "$LOOP_DEV" | awk '$2=="ext4" {print $1}')
 
