@@ -24,7 +24,7 @@ echo ""
 # 2. Create New User
 echo "--- Step 2: Create Personal User ---"
 echo "You need a personal user for SSH and ROS 2 execution."
-read -p "Enter new username (e.g., omnimow, alexander): " NEW_USER
+read -p "Enter new username (e.g., omnimow): " NEW_USER
 
 # Create the user and prompt for password
 adduser "$NEW_USER"
