@@ -20,21 +20,23 @@ jobs:
       - name: Checkout OmniMow scripts
         uses: actions/checkout@v4
 
-      # Fetch the correct dependencies for native build
+# Fetch the correct dependencies for native build (now with kernel image)
       - name: Setup dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git fdisk udev xz-utils bdebstrap mmdebstrap jsonnet libguestfs-tools gdisk
+          sudo apt-get install -y git fdisk udev xz-utils bdebstrap mmdebstrap jsonnet libguestfs-tools gdisk linux-image-generic
+          sudo chmod +r /boot/vmlinuz-* || true
 
       # Clone rsdk with all submodules
       - name: Install rsdk
         run: |
           git clone --recurse-submodules https://github.com/RadxaOS-SDK/rsdk.git
 
-      # Run the build command from the src/bin folder
+      # Run the build command from the src/bin folder (forced direct backend)
       - name: Build Radxa Image
         run: |
           cd rsdk
+          export LIBGUESTFS_BACKEND=direct
           ./src/bin/rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} cli
 
       - name: Inject OmniMow First-Boot Script
