@@ -1,62 +1,71 @@
 #!/bin/bash
 
-# Ensure the script is run as root
+# Ensure the script is run with root privileges
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root"
-  exit
+  echo "Please run as root (using sudo)"
+  exit 1
 fi
 
-echo "=========================================================="
-echo "         Welcome to OmniMow Base OS Initial Setup         "
-echo "=========================================================="
+clear
+echo "===================================================="
+echo "       Welcome to OmniMow Base OS Initial Setup     "
+echo "===================================================="
 echo "This guide will help you configure your new autonomous mower."
 echo ""
 
-# 1. Setup Timezone
+# --- Step 1: Timezone Configuration ---
 echo "--- Step 1: Timezone Configuration ---"
 echo "Example: Europe/Copenhagen, America/New_York, UTC"
-read -p "Enter your timezone [Europe/Copenhagen]: " TIMEZONE
-TIMEZONE=${TIMEZONE:-Europe/Copenhagen}
-timedatectl set-timezone "$TIMEZONE"
-echo "Timezone set to $TIMEZONE."
+read -p "Enter your timezone [Europe/Copenhagen]: " tz_input
+tz_input=${tz_input:-Europe/Copenhagen}
+echo "Setting timezone to $tz_input..."
+timedatectl set-timezone "$tz_input"
 echo ""
 
-# 2. Create New User
-echo "--- Step 2: Create Personal User ---"
-echo "You need a personal user for SSH and ROS 2 execution."
-read -p "Enter new username (e.g., omnimow): " NEW_USER
-
-# Create the user and prompt for password
-adduser "$NEW_USER"
-
-# 3. Assign Hardware & System Permissions
-echo ""
-echo "--- Step 3: Assigning Hardware Permissions ---"
-echo "Granting $NEW_USER access to sudo, I2C, Serial/UART (VESC/ESP32), and video..."
-
-# Create groups if they don't exist, then add the user
-for group in sudo dialout tty i2c video plugdev; do
-    groupadd -f "$group"
-    usermod -aG "$group" "$NEW_USER"
-done
-echo "Permissions granted."
+# --- Step 2: Keyboard Layout Configuration ---
+echo "--- Step 2: Keyboard Layout Configuration ---"
+echo "Example: dk (Danish), us (US English), uk (UK English), de (German)"
+read -p "Enter your 2-letter keyboard layout [dk]: " kbd_input
+kbd_input=${kbd_input:-dk}
+echo "Setting keyboard layout to $kbd_input..."
+# Update the default keyboard configuration file
+sed -i "s/XKBLAYOUT=.*/XKBLAYOUT=\"$kbd_input\"/g" /etc/default/keyboard
+# Apply the settings immediately if setupcon is available
+if command -v setupcon &> /dev/null; then
+    setupcon
+fi
 echo ""
 
-# 4. Cleanup and Security
-echo "--- Step 4: Finalizing & Securing ---"
+# --- Step 3: Create Robot User ---
+echo "--- Step 3: Create Robot User ---"
+read -p "Enter new username for the robot [omnimow]: " new_user
+new_user=${new_user:-omnimow}
 
-# Remove the script trigger from the default user's bashrc so it only runs once
-sed -i '/omnimow-first-boot.sh/d' /home/radxa/.bashrc
-
-echo "=========================================================="
-echo "✅ Setup Complete!"
-echo "The system will now reboot to apply all hardware groups."
-echo "After the reboot, please log in using your new user:"
-echo "ssh $NEW_USER@<robot-ip>"
-echo "=========================================================="
+# Check if user already exists to avoid errors
+if id "$new_user" &>/dev/null; then
+    echo "User $new_user already exists."
+else
+    echo "Creating user $new_user. Please set a password:"
+    adduser "$new_user"
+    echo "Adding $new_user to sudo group..."
+    usermod -aG sudo "$new_user"
+fi
 echo ""
-echo "Rebooting in 5 seconds... Press Ctrl+C to abort reboot."
 
+# --- Step 4: Cleanup and Reboot ---
+echo "--- Step 4: Final Cleanup ---"
+echo "Removing temporary setup script and sudoers rules..."
 rm -f /usr/local/bin/omnimow-first-boot.sh
-sleep 5
-reboot
+rm -f /etc/sudoers.d/omnimow-setup
+
+echo "Initial setup is complete!"
+echo "The default 'radxa' user will now be permanently removed."
+echo "After the reboot, please log in with your new user: $new_user"
+echo ""
+echo "Rebooting in 5 seconds..."
+
+# Run user deletion and reboot in a detached background process.
+# This prevents the script from hanging when the active 'radxa' session is killed.
+nohup bash -c "sleep 5; userdel -r -f radxa; reboot" >/dev/null 2>&1 &
+
+exit 0
