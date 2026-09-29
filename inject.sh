@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# 1. Find the newest Radxa image file
-IMAGE=$(ls -t out/*.img 2>/dev/null | head -n 1)
+# 1. Find the newest Radxa image file (updated for matrix subfolders)
+IMAGE=$(ls -t out/*/*.img 2>/dev/null | head -n 1)
 
 if [ -z "$IMAGE" ]; then
-    echo "Error: No .img files found in the out/ directory!"
+    echo "Error: No .img files found!"
     exit 1
 fi
 
@@ -12,12 +12,9 @@ echo "Modifying: $IMAGE"
 
 # 2. Mount the image as a virtual loop device
 LOOP_DEV=$(sudo losetup -fP --show "$IMAGE")
-
-# VIGTIG TILFØJELSE TIL GITHUB ACTIONS: 
-# Giv serveren 2 sekunder til at lade partitionerne poppe op i systemet
 sleep 2
 
-# 3. Find the root filesystem (Radxa's Ubuntu root drive is always ext4)
+# 3. Find the root filesystem
 ROOT_PART=$(lsblk -rn -o NAME,FSTYPE "$LOOP_DEV" | awk '$2=="ext4" {print $1}')
 
 if [ -z "$ROOT_PART" ]; then
@@ -26,18 +23,36 @@ if [ -z "$ROOT_PART" ]; then
     exit 1
 fi
 
-# 4. Mount the partition to /tmp/robot_root
 echo "Mounting /dev/$ROOT_PART..."
 mkdir -p /tmp/robot_root
 sudo mount "/dev/$ROOT_PART" /tmp/robot_root
 
-# 5. Transfer files and inject community fixes!
+# --- NYT: BIND SYSTEMMAPPER SÅ VI KAN BRUGE APT-GET IN-VIVO ---
+echo "Setting up chroot environment..."
+sudo mount --bind /dev /tmp/robot_root/dev
+sudo mount --bind /sys /tmp/robot_root/sys
+sudo mount --bind /proc /tmp/robot_root/proc
+sudo mount --bind /etc/resolv.conf /tmp/robot_root/etc/resolv.conf
+
+# --- NYT: INSTALLER MANGLENDE DRIVERE OG SSH ---
+echo "Installing firmware and SSH server directly into the image..."
+sudo chroot /tmp/robot_root apt-get update
+sudo DEBIAN_FRONTEND=noninteractive chroot /tmp/robot_root apt-get install -y linux-firmware radxa-firmware openssh-server
+# Tving SSH til at starte automatisk ved boot
+sudo chroot /tmp/robot_root systemctl enable ssh
+
+# 4. Transfer files and inject community fixes!
 echo "Transferring the setup script..."
 sudo cp omnimow-first-boot.sh /tmp/robot_root/usr/local/bin/
 sudo chmod +x /tmp/robot_root/usr/local/bin/omnimow-first-boot.sh
 
-echo "Registering the script in the system..."
-echo "sudo bash /usr/local/bin/omnimow-first-boot.sh" | sudo tee -a /tmp/robot_root/home/radxa/.bashrc > /dev/null
+# --- NYT: GIV SCRIPTET LOV TIL AT KØRE UDEN SUDO-KODE ---
+echo "radxa ALL=(ALL) NOPASSWD: /usr/local/bin/omnimow-first-boot.sh" | sudo tee /tmp/robot_root/etc/sudoers.d/omnimow-setup > /dev/null
+sudo chmod 440 /tmp/robot_root/etc/sudoers.d/omnimow-setup
+
+# Register the script in .bashrc (only for interactive terminals)
+sudo sed -i '/omnimow-first-boot.sh/d' /tmp/robot_root/home/radxa/.bashrc
+echo 'if [[ $- == *i* ]] && [ -f /usr/local/bin/omnimow-first-boot.sh ]; then sudo /usr/local/bin/omnimow-first-boot.sh; fi' | sudo tee -a /tmp/robot_root/home/radxa/.bashrc > /dev/null
 
 echo "Applying Community Fix 1: Clearing machine-id for unique generation..."
 sudo rm -f /tmp/robot_root/etc/machine-id /tmp/robot_root/var/lib/dbus/machine-id
@@ -50,9 +65,13 @@ echo "Applying Community Fix 3: Enabling SoundWire and audio modules..."
 echo "snd_soc_wcd938x" | sudo tee -a /tmp/robot_root/etc/modules-load.d/omnimow-audio.conf > /dev/null
 echo "snd_soc_wcd938x_sdw" | sudo tee -a /tmp/robot_root/etc/modules-load.d/omnimow-audio.conf > /dev/null
 
-# 6. Safely unmount and clean up
+# 5. Safely unmount and clean up (Must unmount binds first!)
 echo "Cleaning up..."
+sudo umount /tmp/robot_root/etc/resolv.conf
+sudo umount /tmp/robot_root/proc
+sudo umount /tmp/robot_root/sys
+sudo umount /tmp/robot_root/dev
 sudo umount /tmp/robot_root
 sudo losetup -d "$LOOP_DEV"
 
-echo "✅ Done! OmniMow setup script, machine-id wipe, and kernel locks are permanently integrated."
+echo "✅ Done! Image is now fully pre-configured."
