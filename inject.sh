@@ -34,10 +34,16 @@ sudo mount --bind /sys /tmp/robot_root/sys
 sudo mount --bind /proc /tmp/robot_root/proc
 sudo mount --bind /etc/resolv.conf /tmp/robot_root/etc/resolv.conf
 
-# --- INSTALL MISSING DRIVERS AND SSH ---
-echo "Installing firmware and SSH server directly into the image..."
+# --- INSTALL MISSING DRIVERS, WI-FI AND SSH ---
+echo "Installing firmware, Wi-Fi drivers, and SSH server directly into the image..."
 sudo chroot /tmp/robot_root apt-get update
-sudo DEBIAN_FRONTEND=noninteractive chroot /tmp/robot_root apt-get install -y linux-firmware radxa-firmware openssh-server
+sudo DEBIAN_FRONTEND=noninteractive chroot /tmp/robot_root apt-get install -y \
+    linux-firmware \
+    radxa-firmware \
+    openssh-server \
+    aic8800-firmware \
+    aic8800-usb-dkms \
+    linux-headers-radxa-dragon-q6a
 
 # Force SSH to start automatically at boot
 echo "Enabling SSH service..."
@@ -52,7 +58,7 @@ sudo curl -sL "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-fi
 echo "Updating initramfs to include new firmware..."
 sudo chroot /tmp/robot_root update-initramfs -c -k all
 
-# 4. Transfer files and inject community fixes!
+# 4. Transfer files and inject community fixes
 echo "Transferring the setup script..."
 sudo cp omnimow-first-boot.sh /tmp/robot_root/usr/local/bin/
 sudo chmod +x /tmp/robot_root/usr/local/bin/omnimow-first-boot.sh
