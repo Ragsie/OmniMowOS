@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# Radxa Dragon Q6A - Post-Build System Image Injector Script (v2)
+# Radxa Dragon Q6A - Post-Build System Image Injector Script (v3)
 # ==============================================================================
 
 set -e
@@ -16,6 +16,10 @@ fi
 
 echo "Preparing injection for: $IMAGE"
 
+# --- FIX FOR "No space left on device": EXPAND IMAGE FILE ---
+echo "Expanding image file by +2GB to provide sufficient workspace for apt operations..."
+truncate -s +2G "$IMAGE"
+
 # 2. Mount the image as a virtual loop device
 LOOP_DEV=$(sudo losetup -fP --show "$IMAGE")
 sleep 2
@@ -28,6 +32,13 @@ if [ -z "$ROOT_PART" ]; then
     sudo losetup -d "$LOOP_DEV"
     exit 1
 fi
+
+# Expand partition & filesystem on loop device
+PART_NUM=$(echo "$ROOT_PART" | grep -o '[0-9]*$')
+echo "Growing partition $PART_NUM on $LOOP_DEV..."
+sudo parted -s "$LOOP_DEV" resizepart "$PART_NUM" 100% || true
+sudo e2fsck -f -y "/dev/$ROOT_PART" || true
+sudo resize2fs "/dev/$ROOT_PART" || true
 
 echo "Mounting /dev/$ROOT_PART to /tmp/robot_root..."
 mkdir -p /tmp/robot_root
@@ -43,10 +54,16 @@ sudo mount --bind /proc /tmp/robot_root/proc
 sudo rm -f /tmp/robot_root/etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /tmp/robot_root/etc/resolv.conf > /dev/null
 
+# Clear leftover APT lists to prevent disk waste & index corruption
+sudo rm -rf /tmp/robot_root/var/lib/apt/lists/*
+
 # --- FIX 1: FIRMWARE & DRIVER INJECTION ---
 echo "Installing firmware, Wi-Fi drivers, and OpenSSH..."
-sudo chroot /tmp/robot_root apt-get update
+# Use || true on apt-get update to tolerate 404 errors on unreleased/optional Ubuntu 26.04 components
+sudo chroot /tmp/robot_root apt-get update -y || true
+
 sudo DEBIAN_FRONTEND=noninteractive chroot /tmp/robot_root apt-get install -y \
+    --no-install-recommends \
     linux-firmware \
     radxa-firmware \
     openssh-server \
@@ -71,11 +88,10 @@ prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
 . /usr/share/initramfs-tools/hook-functions
 
-# Dynamically locate and copy DSP firmware files (adsp.mbn, cdsp.mbn) under /lib/firmware/qcom/
-for fw in $(find /lib/firmware/qcom/ -type f \( -name "adsp*.mbn" -o -name "cdsp*.mbn" \) 2>/dev/null); do
-    if [ -f "$fw" ]; then
-        copy_file firmware "$fw"
-    fi
+# Find and copy all Qualcomm ADSP / CDSP firmware binaries found in /lib/firmware
+find /lib/firmware/qcom -type f \( -name "adsp*.mbn" -o -name "cdsp*.mbn" \) 2>/dev/null | while read -r fw_file; do
+    rel_path=$(echo "$fw_file" | sed 's|^/lib/firmware/||')
+    copy_file firmware "/lib/firmware/$rel_path"
 done
 
 exit 0
@@ -94,7 +110,7 @@ EOF
 
 # --- FIX 4: KERNEL HOLD & MACHINE-ID WIPE ---
 echo "Locking kernel packages against unintended apt upgrades..."
-echo -e "linux-image-radxa-dragon-q6a hold\nradxa-overlays-dkms hold" | sudo chroot /tmp/robot_root dpkg --set-selections
+echo -e "linux-image-radxa-dragon-q6a hold\nradxa-overlays-dkms hold" | sudo chroot /tmp/robot_root dpkg --set-selections || true
 
 echo "Resetting machine-id for unique network identity..."
 sudo rm -f /tmp/robot_root/etc/machine-id /tmp/robot_root/var/lib/dbus/machine-id
@@ -122,9 +138,13 @@ fi
 sudo chroot /tmp/robot_root userdel -r -f rock 2>/dev/null || true
 
 # --- CLEANUP & UNMOUNT ---
+echo "Cleaning APT cache to keep image size compact..."
+sudo chroot /tmp/robot_root apt-get clean
+sudo rm -rf /tmp/robot_root/var/lib/apt/lists/*
+
 echo "Restoring DNS and unmounting partitions..."
 sudo rm -f /tmp/robot_root/etc/resolv.conf
-sudo ln -s ../run/systemd/resolve/stub-resolv.conf /tmp/robot_root/etc/resolv.conf
+sudo ln -s ../run/systemd/resolve/stub-resolv.conf /tmp/robot_root/etc/resolv.conf || true
 
 sudo umount /tmp/robot_root/proc
 sudo umount /tmp/robot_root/sys
