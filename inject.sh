@@ -32,7 +32,7 @@ echo "Setting up chroot environment..."
 sudo mount --bind /dev /tmp/robot_root/dev
 sudo mount --bind /sys /tmp/robot_root/sys
 sudo mount --bind /proc /tmp/robot_root/proc
-sudo mount --bind /etc/resolv.conf /tmp/robot_root/etc/resolv.conf
+sudo cp /etc/resolv.conf /tmp/robot_root/etc/resolv.conf
 
 # --- INSTALL MISSING DRIVERS, WI-FI AND SSH ---
 echo "Installing firmware, Wi-Fi drivers, and SSH server directly into the image..."
@@ -67,10 +67,10 @@ sudo chmod +x /tmp/robot_root/usr/local/bin/omnimow-first-boot.sh
 echo "radxa ALL=(ALL) NOPASSWD: /usr/local/bin/omnimow-first-boot.sh" | sudo tee /tmp/robot_root/etc/sudoers.d/omnimow-setup > /dev/null
 sudo chmod 440 /tmp/robot_root/etc/sudoers.d/omnimow-setup
 
-# Register the script in .bashrc (only for interactive terminals)
-echo "Registering first-boot script in .bashrc..."
-sudo sed -i '/omnimow-first-boot.sh/d' /tmp/robot_root/home/radxa/.bashrc
-echo 'if [[ $- == *i* ]] && [ -f /usr/local/bin/omnimow-first-boot.sh ]; then sudo /usr/local/bin/omnimow-first-boot.sh; fi' | sudo tee -a /tmp/robot_root/home/radxa/.bashrc > /dev/null
+# Register the script globally
+echo "Registering first-boot script globally..."
+echo 'if [[ $- == *i* ]] && [ -f /usr/local/bin/omnimow-first-boot.sh ]; then sudo /usr/local/bin/omnimow-first-boot.sh; fi' | sudo tee /tmp/robot_root/etc/profile.d/99-omnimow-setup.sh > /dev/null
+sudo chmod +x /tmp/robot_root/etc/profile.d/99-omnimow-setup.sh
 
 echo "Applying Community Fix 1: Clearing machine-id for unique generation..."
 sudo rm -f /tmp/robot_root/etc/machine-id /tmp/robot_root/var/lib/dbus/machine-id
@@ -85,7 +85,6 @@ echo "snd_soc_wcd938x_sdw" | sudo tee -a /tmp/robot_root/etc/modules-load.d/omni
 
 # 5. Safely unmount and clean up (Must unmount binds first!)
 echo "Cleaning up..."
-sudo umount /tmp/robot_root/etc/resolv.conf
 sudo umount /tmp/robot_root/proc
 sudo umount /tmp/robot_root/sys
 sudo umount /tmp/robot_root/dev
