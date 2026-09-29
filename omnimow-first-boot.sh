@@ -57,5 +57,6 @@ echo "=========================================================="
 echo ""
 echo "Rebooting in 5 seconds... Press Ctrl+C to abort reboot."
 
+rm -f /usr/local/bin/omnimow-first-boot.sh
 sleep 5
 reboot
