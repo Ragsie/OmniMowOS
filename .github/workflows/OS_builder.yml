@@ -38,16 +38,29 @@ jobs:
         run: |
           git clone --recurse-submodules https://github.com/RadxaOS-SDK/rsdk.git
 
-      # Check cache for an existing clean base image
+      # --- DYNAMIC CACHE KEY GENERATION ---
+      - name: Generate Dynamic Cache Key
+        id: cache-key-gen
+        run: |
+          # 1. Get the latest commit SHA from the official Radxa SDK repository
+          RSDK_SHA=$(git ls-remote https://github.com/RadxaOS-SDK/rsdk.git HEAD | awk '{ print $1}')
+          
+          # 2. Get the current ISO week number (e.g., 42)
+          WEEK_NUM=$(date +%V)
+          
+          # Save variables for the next step
+          echo "rsdk_sha=$RSDK_SHA" >> $GITHUB_OUTPUT
+          echo "week=$WEEK_NUM" >> $GITHUB_OUTPUT
+
+      # --- CACHE CLEAN BASE IMAGE ---
       - name: Cache Clean Base Image
         id: cache-base
         uses: actions/cache@v4
         with:
           path: clean_base_image/
-          # Change '-v1' to '-v2' (etc.) to force a fresh 40-minute build with upstream updates
-          key: radxa-base-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}-v1
+          key: radxa-base-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}-${{ steps.cache-key-gen.outputs.rsdk_sha }}-week-${{ steps.cache-key-gen.outputs.week }}
 
-      # Run the long build process ONLY if the cache was empty (or key was bumped)
+      # --- LONG BUILD PROCESS (ONLY IF NO CACHE HIT) ---
       - name: Build Radxa Image (Only if not cached)
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
@@ -55,17 +68,18 @@ jobs:
           export LIBGUESTFS_BACKEND=direct
           ./src/bin/rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} ${{ matrix.flavor }}
           
-          # Save a clean copy of the newly built image for the cache
+          # Save a clean copy of the newly built image to the cache folder
           mkdir -p ../clean_base_image
           cp out/*/*.img ../clean_base_image/clean.img
 
-      # Copy the clean base image to the output folder ready for injection
-      # We work on a copy so the cached original remains untouched for future runs
+      # --- RESTORE AND PREPARE IMAGE FOR INJECTION ---
       - name: Restore Base Image for Injection
         run: |
+          # We work on a copy so the cached original remains untouched for future runs
           mkdir -p rsdk/out/cache_restore
           cp clean_base_image/clean.img rsdk/out/cache_restore/output.img
 
+      # --- INJECT CUSTOM DRIVERS AND FIXES ---
       - name: Inject OmniMow First-Boot Script
         run: |
           dos2unix inject.sh omnimow-first-boot.sh
@@ -75,25 +89,28 @@ jobs:
           chmod +x inject.sh
           sudo ./inject.sh
 
+      # --- RENAME AND COMPRESS ---
       - name: Rename and Compress Image
         run: |
           cd rsdk
-          # Find the original (now modified) image file
+          # Find the modified image file
           ORIGINAL_IMG=$(ls out/*/*.img | head -n 1)
           
-          # Create the new OmniMow name
+          # Create the new standardized OmniMow name
           NEW_NAME="OmniMow-OS-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}.img"
           
           # Rename and compress the file
           mv "$ORIGINAL_IMG" "$NEW_NAME"
           xz -z -T0 -9 "$NEW_NAME"
 
+      # --- UPLOAD ARTIFACT ---
       - name: Upload finished OmniMow OS
         uses: actions/upload-artifact@v4
         with:
           name: OmniMow-OS-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}
           path: rsdk/OmniMow-OS-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}.img.xz
 
+  # --- CREATE GITHUB RELEASE ---
   release:
     needs: build-os
     if: ${{ inputs.create_release }}
