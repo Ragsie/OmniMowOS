@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 1. Find the newest Radxa image file (updated for matrix subfolders)
+# 1. Find the newest Radxa image file
 IMAGE=$(ls -t out/*/*.img 2>/dev/null | head -n 1)
 
 if [ -z "$IMAGE" ]; then
@@ -27,30 +27,42 @@ echo "Mounting /dev/$ROOT_PART..."
 mkdir -p /tmp/robot_root
 sudo mount "/dev/$ROOT_PART" /tmp/robot_root
 
-# --- NYT: BIND SYSTEMMAPPER SÅ VI KAN BRUGE APT-GET IN-VIVO ---
+# --- BIND SYSTEM FOLDERS FOR APT-GET ---
 echo "Setting up chroot environment..."
 sudo mount --bind /dev /tmp/robot_root/dev
 sudo mount --bind /sys /tmp/robot_root/sys
 sudo mount --bind /proc /tmp/robot_root/proc
 sudo mount --bind /etc/resolv.conf /tmp/robot_root/etc/resolv.conf
 
-# --- NYT: INSTALLER MANGLENDE DRIVERE OG SSH ---
+# --- INSTALL MISSING DRIVERS AND SSH ---
 echo "Installing firmware and SSH server directly into the image..."
 sudo chroot /tmp/robot_root apt-get update
 sudo DEBIAN_FRONTEND=noninteractive chroot /tmp/robot_root apt-get install -y linux-firmware radxa-firmware openssh-server
-# Tving SSH til at starte automatisk ved boot
+
+# Force SSH to start automatically at boot
+echo "Enabling SSH service..."
 sudo chroot /tmp/robot_root systemctl enable ssh
+
+# --- FETCH MISSING GPU FIRMWARE ---
+echo "Fetching missing a660_sqe.fw directly from kernel.org..."
+sudo mkdir -p /tmp/robot_root/lib/firmware/qcom
+sudo curl -sL "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/qcom/a660_sqe.fw" -o /tmp/robot_root/lib/firmware/qcom/a660_sqe.fw
+
+# --- BAKE FIRMWARE INTO BOOT SEQUENCE ---
+echo "Updating initramfs to include new firmware..."
+sudo chroot /tmp/robot_root update-initramfs -c -k all
 
 # 4. Transfer files and inject community fixes!
 echo "Transferring the setup script..."
 sudo cp omnimow-first-boot.sh /tmp/robot_root/usr/local/bin/
 sudo chmod +x /tmp/robot_root/usr/local/bin/omnimow-first-boot.sh
 
-# --- NYT: GIV SCRIPTET LOV TIL AT KØRE UDEN SUDO-KODE ---
+# --- ALLOW SCRIPT TO RUN WITHOUT SUDO PASSWORD ---
 echo "radxa ALL=(ALL) NOPASSWD: /usr/local/bin/omnimow-first-boot.sh" | sudo tee /tmp/robot_root/etc/sudoers.d/omnimow-setup > /dev/null
 sudo chmod 440 /tmp/robot_root/etc/sudoers.d/omnimow-setup
 
 # Register the script in .bashrc (only for interactive terminals)
+echo "Registering first-boot script in .bashrc..."
 sudo sed -i '/omnimow-first-boot.sh/d' /tmp/robot_root/home/radxa/.bashrc
 echo 'if [[ $- == *i* ]] && [ -f /usr/local/bin/omnimow-first-boot.sh ]; then sudo /usr/local/bin/omnimow-first-boot.sh; fi' | sudo tee -a /tmp/robot_root/home/radxa/.bashrc > /dev/null
 
