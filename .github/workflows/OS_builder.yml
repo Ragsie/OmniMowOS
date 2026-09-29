@@ -15,41 +15,46 @@ on:
 jobs:
   build-os:
     runs-on: ubuntu-24.04-arm 
+    strategy:
+      # This matrix spins up two separate servers simultaneously
+      matrix:
+        flavor: [cli, gnome]
 
     steps:
       - name: Checkout OmniMow scripts
         uses: actions/checkout@v4
 
-# Fetch the correct dependencies for native build (now with kernel image)
       - name: Setup dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git fdisk udev xz-utils bdebstrap mmdebstrap jsonnet libguestfs-tools gdisk linux-image-generic
+          sudo apt-get install -y git fdisk udev xz-utils bdebstrap mmdebstrap jsonnet libguestfs-tools gdisk linux-image-generic dos2unix
+          # Grant supermin permission to read the kernel files
           sudo chmod +r /boot/vmlinuz-* || true
 
-      # Clone rsdk with all submodules
       - name: Install rsdk
         run: |
           git clone --recurse-submodules https://github.com/RadxaOS-SDK/rsdk.git
 
-      # Run the build command from the src/bin folder (forced direct backend)
-      - name: Build Radxa Image
+      - name: Build Radxa Image (${{ matrix.flavor }})
         run: |
           cd rsdk
           export LIBGUESTFS_BACKEND=direct
-          ./src/bin/rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} cli
+          # The ${{ matrix.flavor }} variable dynamically injects 'cli' or 'gnome'
+          ./src/bin/rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} ${{ matrix.flavor }}
 
       - name: Inject OmniMow First-Boot Script
         run: |
+          # Fix Windows line endings (CRLF -> LF) to prevent 'No such file' errors
+          dos2unix inject.sh omnimow-first-boot.sh
+          
           cp inject.sh rsdk/
           cp omnimow-first-boot.sh rsdk/
           cd rsdk
           chmod +x inject.sh
-          # Ensure the inject script finds the file in Radxa's subfolders:
+          # Ensure the inject script finds the image file in Radxa's subfolders
           sed -i 's|out/\*.img|out/*/*.img|g' inject.sh
           sudo ./inject.sh
 
-      # Compress the found .img file in the subfolder
       - name: Compress to .xz
         run: |
           cd rsdk
@@ -58,5 +63,6 @@ jobs:
       - name: Upload finished OmniMow OS
         uses: actions/upload-artifact@v4
         with:
-          name: OmniMow-OS-${{ inputs.ubuntu_version }}
+          # Automatically names the artifacts e.g., OmniMow-OS-resolute-cli and OmniMow-OS-resolute-gnome
+          name: OmniMow-OS-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}
           path: rsdk/out/*/*.img.xz
