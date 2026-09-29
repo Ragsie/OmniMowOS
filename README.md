@@ -1,14 +1,11 @@
 # OmniMow - Base OS
 
-This repository contains the official, pre-configured operating system for the **OmniMow** autonomous robot lawnmower project. 
-
 The image is tailor-made for the **Radxa Dragon Q6A** board and serves as a rock-solid, reproducible foundation for running ROS 2 and Docker, with critical hardware and stability fixes built directly into the core. But can also be used for other projects.
 
 ## 🌟 Key Features
-* **OS Versions:** Ubuntu 24.04 LTS (Noble) / Ubuntu 26.04 LTS (Resolute) Server CLI (Headless).
+* **OS Versions:** Ubuntu 26.04 LTS (Resolute) Server CLI (Headless).
 * **Hardware-Ready:** Pre-installed Qualcomm BSP for full NPU/GPU and FastRPC support.
-* **ROS 2 Optimized:** Ready for ROS 2 (Jazzy / Lyrical Luth) and Docker out of the box.
-* **Interactive Setup:** Built-in `omnimow-first-boot.sh` script automatically guides you through user creation, timezone setup, and hardware permissions on your first login.
+* **Interactive Setup:** Built-in `omnimow-first-boot.sh` script automatically guides you through user creation, timezone setup, keyboard layout and hardware permissions on your first login.
 * **Cloud Native Builds:** 100% automated native ARM64 builds via GitHub Actions.
 
 ## 🛠️ Built-in Community Fixes
@@ -16,7 +13,7 @@ We apply several critical fixes on top of the stock Radxa SDK to ensure OmniMow 
 * **Unique Network Identity:** Clears the baked-in `machine-id` during the build process, ensuring every robot generates a unique ID/IP on the network.
 * **Update Resilience:** Locks the kernel (`linux-image-radxa-dragon-q6a`) and hardware overlays (`radxa-overlays-dkms`) using `apt-mark hold` to prevent `sudo apt upgrade` from breaking the boot sequence.
 * **Audio/SoundWire Support:** Pre-loads `snd_soc_wcd938x` and `snd_soc_wcd938x_sdw` modules so audio works out of the box.
-* **Hardware Permissions:** Automatically configures groups for `i2c`, `dialout`, `video`, and `tty` for seamless ESP32 and VESC communication.
+* **Hardware Permissions:** Automatically configures groups for `i2c`, `dialout`, `video`, and `tty`
 
 ---
 
