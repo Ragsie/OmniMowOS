@@ -33,8 +33,8 @@ sudo mount --bind /dev /tmp/robot_root/dev
 sudo mount --bind /sys /tmp/robot_root/sys
 sudo mount --bind /proc /tmp/robot_root/proc
 
-# Force working DNS into chroot so apt-get and curl actually work
-sudo cp /tmp/robot_root/etc/resolv.conf /tmp/robot_root/etc/resolv.conf.bak
+# Force working DNS into chroot safely
+sudo rm -f /tmp/robot_root/etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /tmp/robot_root/etc/resolv.conf > /dev/null
 
 # Remove the default 'rock' user immediately (if it exists)
@@ -74,10 +74,10 @@ sudo chmod +x /tmp/robot_root/usr/local/bin/omnimow-first-boot.sh
 echo "radxa ALL=(ALL) NOPASSWD: /usr/local/bin/omnimow-first-boot.sh" | sudo tee /tmp/robot_root/etc/sudoers.d/omnimow-setup > /dev/null
 sudo chmod 440 /tmp/robot_root/etc/sudoers.d/omnimow-setup
 
-# Register the script in .bashrc (only for interactive terminals)
-echo "Registering first-boot script in .bashrc..."
-sudo sed -i '/omnimow-first-boot.sh/d' /tmp/robot_root/home/radxa/.bashrc
-echo 'if [[ $- == *i* ]] && [ -f /usr/local/bin/omnimow-first-boot.sh ]; then sudo /usr/local/bin/omnimow-first-boot.sh; fi' | sudo tee -a /tmp/robot_root/home/radxa/.bashrc > /dev/null
+# Register the script globally (works regardless of home directory generation)
+echo "Registering first-boot script in global profile.d..."
+echo 'if [[ $- == *i* ]] && [ -f /usr/local/bin/omnimow-first-boot.sh ]; then sudo /usr/local/bin/omnimow-first-boot.sh; fi' | sudo tee /tmp/robot_root/etc/profile.d/99-omnimow-setup.sh > /dev/null
+sudo chmod +x /tmp/robot_root/etc/profile.d/99-omnimow-setup.sh
 
 echo "Applying Community Fix 1: Clearing machine-id for unique generation..."
 sudo rm -f /tmp/robot_root/etc/machine-id /tmp/robot_root/var/lib/dbus/machine-id
@@ -90,9 +90,12 @@ echo "Applying Community Fix 3: Enabling SoundWire and audio modules..."
 echo "snd_soc_wcd938x" | sudo tee -a /tmp/robot_root/etc/modules-load.d/omnimow-audio.conf > /dev/null
 echo "snd_soc_wcd938x_sdw" | sudo tee -a /tmp/robot_root/etc/modules-load.d/omnimow-audio.conf > /dev/null
 
-# 5. Safely unmount and clean up (Restore DNS file)
+# 5. Safely unmount and clean up
 echo "Cleaning up..."
-sudo mv /tmp/robot_root/etc/resolv.conf.bak /tmp/robot_root/etc/resolv.conf
+# Restore the standard systemd DNS symlink
+sudo rm -f /tmp/robot_root/etc/resolv.conf
+sudo ln -s ../run/systemd/resolve/stub-resolv.conf /tmp/robot_root/etc/resolv.conf
+
 sudo umount /tmp/robot_root/proc
 sudo umount /tmp/robot_root/sys
 sudo umount /tmp/robot_root/dev
