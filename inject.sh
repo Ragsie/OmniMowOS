@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# Radxa Dragon Q6A - Post-Build System Image Injector Script
+# Radxa Dragon Q6A - Post-Build System Image Injector Script (v2)
 # ==============================================================================
 
 set -e
@@ -71,17 +71,19 @@ prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
 . /usr/share/initramfs-tools/hook-functions
 
-if [ -f /lib/firmware/qcom/qcs6490/radxa/dragon-q6a/adsp.mbn ]; then
-    copy_file firmware /lib/firmware/qcom/qcs6490/radxa/dragon-q6a/adsp.mbn
-fi
-if [ -f /lib/firmware/qcom/qcs6490/radxa/dragon-q6a/cdsp.mbn ]; then
-    copy_file firmware /lib/firmware/qcom/qcs6490/radxa/dragon-q6a/cdsp.mbn
-fi
+# Dynamically locate and copy DSP firmware files (adsp.mbn, cdsp.mbn) under /lib/firmware/qcom/
+for fw in $(find /lib/firmware/qcom/ -type f \( -name "adsp*.mbn" -o -name "cdsp*.mbn" \) 2>/dev/null); do
+    if [ -f "$fw" ]; then
+        copy_file firmware "$fw"
+    fi
+done
+
+exit 0
 EOF
 sudo chmod +x /tmp/robot_root/etc/initramfs-tools/hooks/qcom-dsp
 
 echo "Rebuilding initramfs inside image..."
-sudo chroot /tmp/robot_root update-initramfs -c -k all
+sudo chroot /tmp/robot_root update-initramfs -u -k all || sudo chroot /tmp/robot_root update-initramfs -c -k all
 
 # --- FIX 3: FASTRPC & DMA HEAP UDEV RULES ---
 echo "Configuring udev rules for FastRPC (0666)..."
