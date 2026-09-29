@@ -11,12 +11,16 @@ on:
         options:
           - noble
           - resolute
+      create_release:
+        description: 'Create a public GitHub Release automatically?'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   build-os:
     runs-on: ubuntu-24.04-arm 
     strategy:
-      # This matrix spins up two separate servers simultaneously
       matrix:
         flavor: [cli, gnome]
 
@@ -28,7 +32,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git fdisk udev xz-utils bdebstrap mmdebstrap jsonnet libguestfs-tools gdisk linux-image-generic dos2unix
-          # Grant supermin permission to read the kernel files
           sudo chmod +r /boot/vmlinuz-* || true
 
       - name: Install rsdk
@@ -39,19 +42,15 @@ jobs:
         run: |
           cd rsdk
           export LIBGUESTFS_BACKEND=direct
-          # The ${{ matrix.flavor }} variable dynamically injects 'cli' or 'gnome'
           ./src/bin/rsdk build radxa-dragon-q6a ${{ inputs.ubuntu_version }} ${{ matrix.flavor }}
 
       - name: Inject OmniMow First-Boot Script
         run: |
-          # Fix Windows line endings (CRLF -> LF) to prevent 'No such file' errors
           dos2unix inject.sh omnimow-first-boot.sh
-          
           cp inject.sh rsdk/
           cp omnimow-first-boot.sh rsdk/
           cd rsdk
           chmod +x inject.sh
-          # Ensure the inject script finds the image file in Radxa's subfolders
           sed -i 's|out/\*.img|out/*/*.img|g' inject.sh
           sudo ./inject.sh
 
@@ -60,9 +59,33 @@ jobs:
           cd rsdk
           xz -z -T0 -9 out/*/*.img
 
+      # Upload to GitHub Actions temporary storage (necessary to pass it to the Release job)
       - name: Upload finished OmniMow OS
         uses: actions/upload-artifact@v4
         with:
-          # Automatically names the artifacts e.g., OmniMow-OS-resolute-cli and OmniMow-OS-resolute-gnome
           name: OmniMow-OS-${{ inputs.ubuntu_version }}-${{ matrix.flavor }}
           path: rsdk/out/*/*.img.xz
+
+  # New job that gathers the files and creates a public Release
+  release:
+    needs: build-os
+    if: ${{ inputs.create_release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Crucial: Gives the workflow permission to create a release
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          # Automatically tags the release with the build number
+          tag_name: build-${{ github.run_number }}
+          name: OmniMow OS (${{ inputs.ubuntu_version }}) - Build ${{ github.run_number }}
+          draft: false
+          prerelease: false
+          # Uploads the raw .xz files without the zip wrapper
+          files: artifacts/**/*.img.xz
