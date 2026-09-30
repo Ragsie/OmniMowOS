@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# Radxa Dragon Q6A - Post-Build System Image Injector Script (v3)
+# Radxa Dragon Q6A - Post-Build System Image Injector Script (v4)
 # ==============================================================================
 
 set -e
@@ -16,13 +16,16 @@ fi
 
 echo "Preparing injection for: $IMAGE"
 
-# --- FIX FOR "No space left on device": EXPAND IMAGE FILE ---
-echo "Expanding image file by +2GB to provide sufficient workspace for apt operations..."
+# --- AUTO DISK EXPANSION (+2GB) ---
+echo "Expanding image by +2GB to prevent disk full errors during apt operations..."
 truncate -s +2G "$IMAGE"
 
 # 2. Mount the image as a virtual loop device
 LOOP_DEV=$(sudo losetup -fP --show "$IMAGE")
 sleep 2
+
+# Force kernel partition table re-read
+sudo partx -u "$LOOP_DEV" 2>/dev/null || true
 
 # 3. Locate the root partition (ext4)
 ROOT_PART=$(lsblk -rn -o NAME,FSTYPE "$LOOP_DEV" | awk '$2=="ext4" {print $1}')
@@ -33,12 +36,12 @@ if [ -z "$ROOT_PART" ]; then
     exit 1
 fi
 
-# Expand partition & filesystem on loop device
+# Expand partition and filesystem
+echo "Resizing partition and filesystem on /dev/$ROOT_PART..."
 PART_NUM=$(echo "$ROOT_PART" | grep -o '[0-9]*$')
-echo "Growing partition $PART_NUM on $LOOP_DEV..."
-sudo parted -s "$LOOP_DEV" resizepart "$PART_NUM" 100% || true
-sudo e2fsck -f -y "/dev/$ROOT_PART" || true
-sudo resize2fs "/dev/$ROOT_PART" || true
+sudo parted -s "$LOOP_DEV" resizepart "$PART_NUM" 100% 2>/dev/null || true
+sudo e2fsck -f -y "/dev/$ROOT_PART" 2>/dev/null || true
+sudo resize2fs "/dev/$ROOT_PART" 2>/dev/null || true
 
 echo "Mounting /dev/$ROOT_PART to /tmp/robot_root..."
 mkdir -p /tmp/robot_root
@@ -50,28 +53,51 @@ sudo mount --bind /dev /tmp/robot_root/dev
 sudo mount --bind /sys /tmp/robot_root/sys
 sudo mount --bind /proc /tmp/robot_root/proc
 
-# Force working DNS inside chroot
+# Force working DNS inside chroot safely
 sudo rm -f /tmp/robot_root/etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /tmp/robot_root/etc/resolv.conf > /dev/null
 
-# Clear leftover APT lists to prevent disk waste & index corruption
-sudo rm -rf /tmp/robot_root/var/lib/apt/lists/*
+# --- FIX 1: KEYBOARD LAYOUT PERSISTENCE (Danish Default) ---
+echo "Configuring persistent Danish keyboard layout..."
+sudo tee /tmp/robot_root/etc/default/keyboard > /dev/null <<'EOF'
+XKBMODEL="pc105"
+XKBLAYOUT="dk"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"
+EOF
 
-# --- FIX 1: FIRMWARE & DRIVER INJECTION ---
-echo "Installing firmware, Wi-Fi drivers, and OpenSSH..."
-# Use || true on apt-get update to tolerate 404 errors on unreleased/optional Ubuntu 26.04 components
-sudo chroot /tmp/robot_root apt-get update -y || true
+# --- FIX 2: REMOVE DEFAULT 'ROCK' USER THOROUGHLY ---
+echo "Removing default 'rock' user..."
+sudo chroot /tmp/robot_root userdel -r -f rock 2>/dev/null || true
+sudo chroot /tmp/robot_root deluser --remove-home rock 2>/dev/null || true
+sudo rm -rf /tmp/robot_root/home/rock
+sudo rm -f /tmp/robot_root/etc/sudoers.d/rock /tmp/robot_root/etc/sudoers.d/*rock*
 
+# --- FIX 3: FIRMWARE, DRIVERS, FASTRPC & SSH ACTIVATION ---
+echo "Installing firmware, FastRPC, Wi-Fi drivers, and OpenSSH..."
+sudo chroot /tmp/robot_root apt-get update || true
 sudo DEBIAN_FRONTEND=noninteractive chroot /tmp/robot_root apt-get install -y \
-    --no-install-recommends \
     linux-firmware \
     radxa-firmware \
+    radxa-firmware-qcs6490 \
+    fastrpc \
+    fastrpc-dev \
+    libcdsprpc1 \
     openssh-server \
     aic8800-firmware \
     aic8800-usb-dkms \
     linux-headers-radxa-dragon-q6a || true
 
-sudo chroot /tmp/robot_root systemctl enable ssh
+# Enable SSH service AND SSH socket (for Ubuntu 24.04/26.04 socket activation)
+echo "Enabling SSH service & socket activation..."
+sudo chroot /tmp/robot_root systemctl unmask ssh 2>/dev/null || true
+sudo chroot /tmp/robot_root systemctl enable ssh 2>/dev/null || true
+sudo chroot /tmp/robot_root systemctl enable ssh.socket 2>/dev/null || true
+
+# Generate SSH host keys inside image so SSH starts immediately on boot
+echo "Generating SSH host keys..."
+sudo chroot /tmp/robot_root ssh-keygen -A 2>/dev/null || true
 
 # Fetch missing GPU Firmware (Adreno 643)
 echo "Downloading a660_sqe.fw from kernel.org..."
@@ -79,7 +105,7 @@ sudo mkdir -p /tmp/robot_root/lib/firmware/qcom
 sudo curl -sL "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/qcom/a660_sqe.fw" \
     -o /tmp/robot_root/lib/firmware/qcom/a660_sqe.fw
 
-# --- FIX 2: INITRAMFS DSP FIRMWARE HOOK (NVMe Boot Fix) ---
+# --- FIX 4: INITRAMFS DSP FIRMWARE HOOK (NVMe Boot Fix) ---
 echo "Creating Initramfs DSP hook to prevent NVMe early-boot timing error..."
 sudo tee /tmp/robot_root/etc/initramfs-tools/hooks/qcom-dsp > /dev/null <<'EOF'
 #!/bin/sh
@@ -88,10 +114,9 @@ prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
 . /usr/share/initramfs-tools/hook-functions
 
-# Find and copy all Qualcomm ADSP / CDSP firmware binaries found in /lib/firmware
-find /lib/firmware/qcom -type f \( -name "adsp*.mbn" -o -name "cdsp*.mbn" \) 2>/dev/null | while read -r fw_file; do
-    rel_path=$(echo "$fw_file" | sed 's|^/lib/firmware/||')
-    copy_file firmware "/lib/firmware/$rel_path"
+# Copy ADSP and CDSP firmware binaries to initramfs
+for fw in $(find /lib/firmware/qcom/ -name "adsp*.mbn" -o -name "cdsp*.mbn" 2>/dev/null); do
+    copy_file firmware "$fw"
 done
 
 exit 0
@@ -101,27 +126,27 @@ sudo chmod +x /tmp/robot_root/etc/initramfs-tools/hooks/qcom-dsp
 echo "Rebuilding initramfs inside image..."
 sudo chroot /tmp/robot_root update-initramfs -u -k all || sudo chroot /tmp/robot_root update-initramfs -c -k all
 
-# --- FIX 3: FASTRPC & DMA HEAP UDEV RULES ---
+# --- FIX 5: FASTRPC & DMA HEAP UDEV RULES ---
 echo "Configuring udev rules for FastRPC (0666)..."
 sudo tee /tmp/robot_root/etc/udev/rules.d/99-fastrpc.rules > /dev/null <<'EOF'
 KERNEL=="fastrpc-*", MODE="0666"
 SUBSYSTEM=="dma_heap", KERNEL=="system", MODE="0666"
 EOF
 
-# --- FIX 4: KERNEL HOLD & MACHINE-ID WIPE ---
+# --- FIX 6: KERNEL HOLD & MACHINE-ID WIPE ---
 echo "Locking kernel packages against unintended apt upgrades..."
-echo -e "linux-image-radxa-dragon-q6a hold\nradxa-overlays-dkms hold" | sudo chroot /tmp/robot_root dpkg --set-selections || true
+echo -e "linux-image-radxa-dragon-q6a hold\nradxa-overlays-dkms hold" | sudo chroot /tmp/robot_root dpkg --set-selections
 
 echo "Resetting machine-id for unique network identity..."
 sudo rm -f /tmp/robot_root/etc/machine-id /tmp/robot_root/var/lib/dbus/machine-id
 sudo touch /tmp/robot_root/etc/machine-id
 
-# --- FIX 5: SOUNDWIRE AUDIO MODULES ---
+# --- FIX 7: SOUNDWIRE AUDIO MODULES ---
 echo "Enabling SoundWire audio modules..."
 sudo mkdir -p /tmp/robot_root/etc/modules-load.d
 echo -e "snd_soc_wcd938x\nsnd_soc_wcd938x_sdw" | sudo tee /tmp/robot_root/etc/modules-load.d/omnimow-audio.conf > /dev/null
 
-# --- FIX 6: FIRST-BOOT SCRIPT PLACEMENT ---
+# --- FIX 8: FIRST-BOOT SCRIPT PLACEMENT ---
 if [ -f omnimow-first-boot.sh ]; then
     echo "Copying first-boot setup script..."
     sudo cp omnimow-first-boot.sh /tmp/robot_root/usr/local/bin/
@@ -134,17 +159,14 @@ if [ -f omnimow-first-boot.sh ]; then
     sudo chmod +x /tmp/robot_root/etc/profile.d/99-omnimow-setup.sh
 fi
 
-# Remove default 'rock' user if present
-sudo chroot /tmp/robot_root userdel -r -f rock 2>/dev/null || true
-
-# --- CLEANUP & UNMOUNT ---
-echo "Cleaning APT cache to keep image size compact..."
-sudo chroot /tmp/robot_root apt-get clean
+# Clean up apt caches to save space
+sudo chroot /tmp/robot_root apt-get clean || true
 sudo rm -rf /tmp/robot_root/var/lib/apt/lists/*
 
+# --- CLEANUP & UNMOUNT ---
 echo "Restoring DNS and unmounting partitions..."
 sudo rm -f /tmp/robot_root/etc/resolv.conf
-sudo ln -s ../run/systemd/resolve/stub-resolv.conf /tmp/robot_root/etc/resolv.conf || true
+sudo ln -s ../run/systemd/resolve/stub-resolv.conf /tmp/robot_root/etc/resolv.conf
 
 sudo umount /tmp/robot_root/proc
 sudo umount /tmp/robot_root/sys
@@ -152,4 +174,4 @@ sudo umount /tmp/robot_root/dev
 sudo umount /tmp/robot_root
 sudo losetup -d "$LOOP_DEV"
 
-echo "✅ Injection complete! Image is ready for flashing."
+echo "✅ Injection complete! Image is ready for Raspberry Pi Imager."
