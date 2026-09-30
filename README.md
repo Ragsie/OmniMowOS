@@ -1,5 +1,7 @@
 # OmniMow - Base OS
 
+# Dont use only for testing !!
+
 The image is tailor-made for the **Radxa Dragon Q6A** board and serves as a rock-solid, reproducible foundation for running ROS 2 and Docker, with critical hardware and stability fixes built directly into the core. But can also be used for other projects.
 
 ## 🌟 Key Features
